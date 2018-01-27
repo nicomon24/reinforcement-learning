@@ -3,299 +3,296 @@
     and applies it to the Atari Breakout environment.
 
     Can be used both for training and evaluation
+
+    ACTIONS:
+    - 0: noop
+    - 1: fire
+    - 2: right
+    - 3: left
 '''
 
 import tensorflow as tf
+from tqdm import trange
 import numpy as np
 import random, argparse, os
-from scipy.misc import imresize
 import gym
-from tqdm import trange
-import matplotlib.pyplot as plt
 from time import sleep
 import time
+from collections import deque
 
-def encode_frame(new_frame):
-    global last_frame
-    # First we need to take the max from new frame and last frame to remove flickering
-    # Breakout seems not to have this glitches, so I will skip it for now
-    #stacked = np.stack([last_frame, new_frame], axis=-1)
-    #new_frame = stacked.max(axis=-1)
-    #last_frame = new_frame
-    # Transform to B/W for simplicity
-    bw = new_frame.mean(axis=2)
-    # Crop removing useless parts
-    cropped = bw[30:195,4:-4]
-    # Resize to wanted size (83x83)
-    resized = imresize(cropped, size=(TARGET_SIZE, TARGET_SIZE), interp='nearest')
-    return resized
+from wrappers import SkipperEnvironment, CroppedEnvironment, TimeStackEnvironment, FiringEnvironment, NoCatsLivesEnvironment, ClipRewardEnv, NoopEnvironment
+from model import DQN
+from replay_buffer import ReplayBuffer
 
 '''
-    The replay buffer stores an amount N of previous sequences
-    (s, a, r, s', done) that will be sampled for training
-'''
-class ReplayBuffer:
+import matplotlib.pyplot as plt
 
-    def __init__(self, max_len):
-        self.buffer = []
-        self.max_len = max_len
-
-    def add_to_buffer(self, sample):
-        if len(self.buffer) >= self.max_len:
-            self.buffer.pop(0) # Remove 1 sample
-        # Add the new sample
-        self.buffer.append(sample)
-
-    def get_batch(self, batch_size):
-        return random.sample(self.buffer, batch_size)
-
-class DQN:
-
-    def __init__(self, frame_size, frames_per_state, action_space_size, scope):
-        self.scope = scope
-        with tf.variable_scope(scope):
-            self.global_step = tf.train.get_or_create_global_step()
-            self.increment_global_step = tf.assign(self.global_step, self.global_step + 1)
-            # Define the network
-            self.input = tf.placeholder(tf.float32, shape=(None, frames_per_state, frame_size, frame_size))
-            # Transpose to place the time on the last channel
-            transposed = tf.transpose(self.input, [0, 2, 3, 1])
-            # First convolution, 32 8x8 filters, stride=4
-            conv1 = tf.layers.conv2d(transposed, filters=32, kernel_size=(8, 8), padding='SAME', strides=4)
-            relu1 = tf.nn.relu(conv1)
-            # Second convolution, 64 4x4, stride=2
-            conv2 = tf.layers.conv2d(relu1, filters=64, kernel_size=(4, 4), padding='SAME', strides=2)
-            relu2 = tf.nn.relu(conv2)
-            # Third convolution, 64 3x3, stride=1
-            conv3 = tf.layers.conv2d(relu2, filters=64, kernel_size=(3, 3), padding='SAME', strides=1)
-            relu3 = tf.nn.relu(conv3)
-            # First hidden layer
-            flatted = tf.layers.flatten(relu3)
-            hidden1 = tf.layers.dense(flatted, 512)
-            self.logits = tf.layers.dense(hidden1, action_space_size)
-            # Train op
-            self.actions = tf.placeholder(tf.uint8, shape=(None,))
-            self.targets = tf.placeholder(tf.float32, shape=(None,))
-            logits_selected = tf.reduce_sum(tf.one_hot(self.actions, action_space_size) * self.logits, axis=-1)
-            self.cost = tf.reduce_mean(tf.square(self.targets - logits_selected))
-            self.train_op = tf.train.RMSPropOptimizer(0.00025, 0.99, 0.0, 1e-6).minimize(self.cost)
-            # Add summaries
-            tf.summary.scalar('cost', self.cost)
-
-    def copy_from(self, master_dqn, session):
-        # Get all trainable vars from the 2 dqn and order them by name to have the same order
-        my_vars = sorted([v for v in tf.trainable_variables() if v.name.startswith(self.scope)], key=lambda v: v.name)
-        master_vars = sorted([v for v in tf.trainable_variables() if v.name.startswith(master_dqn.scope)], key=lambda v: v.name)
-        # Assign values
-        ops = [v.assign(session.run(v_master)) for v, v_master in zip(my_vars, master_vars)]
-        session.run(ops)
-
-def print_state(state):
+def plot_state(state):
     fig = plt.figure()
-    for i in range(4):
-        ax = fig.add_subplot(2,2,i+1)
-        ax.imshow(state[i])
+    axes = [plt.subplot(221), plt.subplot(222), plt.subplot(223), plt.subplot(224)]
+    for i, axis in enumerate(axes):
+        axis.imshow(state[:,:,i])
     plt.show()
+'''
 
-def train(env=None, n_frames_in_state=4, action_repeat=1, dqn=None, target_dqn=None,
-            saver=None, FLAGS=None, start_step = 0):
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--mode', type=str, default='train',
+      help="""\
+      Mode: train | test | render
+    """)
+    parser.add_argument('--alias', type=str, default='tmp',
+      help="""\
+      Alias to create the checkpoint name.
+    """)
+    parser.add_argument('--train_dir', type=str, default='tmp',
+      help="""\
+      Directory to save checkpoints.
+    """)
+    parser.add_argument('--log_dir', type=str, default='tmp_logs',
+      help="""\
+      Directory to save logs for tensorboard.
+    """)
+    parser.add_argument('--checkpoint', type=str, default='',
+      help="""\
+      Select a checkpoint to start from.
+    """)
+    parser.add_argument('--video_output', type=str, default='',
+      help="""\
+      Select the filename of the output video (only in render mode).
+    """)
+    parser.add_argument('--render_episodes', type=int, default=10,
+      help="""\
+      Select the number of episodes to render.
+    """)
+    parser.add_argument('--steps', type=int, default=30000000,
+      help="""\
+      Number of training steps.
+    """)
+    parser.add_argument('--start_steps', type=int, default=0,
+      help="""\
+      Number of initial training steps.
+    """)
+    parser.add_argument('--vanilla', type=int, default=0,
+      help="""\
+      Environment reward as designed or modified.
+    """)
+    FLAGS, unparsed = parser.parse_known_args()
+    tf.logging.set_verbosity(tf.logging.INFO)
+
+    FRAME_SIZE = 83
+    TIME_STACK = 4
+    STEPS_TO_TRAIN = 4
     REPLAY_BUFFER_MIN_SIZE = 50000
     REPLAY_BUFFER_MAX_SIZE = 1000000
     EPSILON_MIN = 0.1
     EPSILON_MAX = 1.0
     EPSILON_FALL = 1000000
     GAMMA = 0.99
-    TRAIN_EPISODES = FLAGS.episodes
+    TRAIN_STEPS = FLAGS.steps
     BATCH_SIZE = 32
-    COPY_STEP = 10000
-    STEPS_TO_CHECKPOINT = 5000
+    COPY_STEP = 4096
+    STEPS_TO_CHECKPOINT = 10000
+    GENERATOR_SCOPE = 'generator'
+    TARGET_SCOPE = 'target'
 
-    # Create replay buffer
-    RB = ReplayBuffer(REPLAY_BUFFER_MAX_SIZE)
+    env = gym.make("BreakoutNoFrameskip-v4")
+    if not FLAGS.vanilla:
+        env = NoCatsLivesEnvironment(env)
+    env = NoopEnvironment(env)
+    env = SkipperEnvironment(env)
+    env = CroppedEnvironment(env, target_size=FRAME_SIZE)
+    env = TimeStackEnvironment(env, time_period=TIME_STACK)
+    env = FiringEnvironment(env)
+    if not FLAGS.vanilla:
+        env = ClipRewardEnv(env)
+    # Set seed for replication
+    env.seed(42)
 
-    # Fill replay buffer
-    obs = env.reset()
-    _encoded_obs = encode_frame(obs)
-    state = np.array([_encoded_obs] * n_frames_in_state)
-    current_game_step = 0
-    done = False
-    # Populate the replay buffer with the minimum number of experiences (random)
-    for experience in trange(REPLAY_BUFFER_MIN_SIZE):
-        # Choose a random action
-        if current_game_step % action_repeat == 0:
-            a = env.action_space.sample()
-        # Play
-        for _i in range(action_repeat):
-            obs, r, done, _ = env.step(a)
-        # Get the new state and add to replay buffer
-        _encoded_obs = encode_frame(obs)
-        next_state = np.append(state[1:], [_encoded_obs], axis=0)
-        RB.add_to_buffer((state, a, r, next_state, done))
-        # Check if terminated
-        if done:
-            obs = env.reset()
-            _encoded_obs = encode_frame(obs)
-            state = np.array([_encoded_obs] * n_frames_in_state)
-            current_game_step = 0
-        else:
-            # Update game step
-            current_game_step += 1
-    print("Replay buffer size:", len(RB.buffer))
+    # Create ReplayBuffer
+    repbuf = ReplayBuffer(REPLAY_BUFFER_MAX_SIZE)
 
-    total_steps = start_step
-    rewards = []
+    # Create DQNs
+    sess = tf.Session()
+    dqn = DQN((FRAME_SIZE, FRAME_SIZE, TIME_STACK), env.action_space.n, GENERATOR_SCOPE)
+    target_dqn = DQN((FRAME_SIZE, FRAME_SIZE, TIME_STACK), env.action_space.n, TARGET_SCOPE, reuse=tf.AUTO_REUSE)
+    # Init vars and create saver
+    sess.run(tf.global_variables_initializer())
+    saver = tf.train.Saver(var_list=tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope=GENERATOR_SCOPE), max_to_keep=10)
 
-    for e in range(TRAIN_EPISODES):
+    # Check if we need to load a checkpoint
+    if FLAGS.checkpoint:
+        _saver = tf.train.Saver(var_list=tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope=GENERATOR_SCOPE))
+        _saver.restore(sess, FLAGS.checkpoint)
 
+    if FLAGS.mode == 'train':
+        # Fill replay buffer with the minimum number of sample
         obs = env.reset()
-        _encoded_obs = encode_frame(obs)
-        state = np.array([_encoded_obs] * n_frames_in_state)
-        episode_steps = 0
-        done = False
+        for i in trange(REPLAY_BUFFER_MIN_SIZE):
+            _old_state = obs
+            # Generate random play
+            a = env.action_space.sample()
+            obs, reward, done, _ = env.step(a)
+            # Add to replay buffer, sample of type: (state, action, reward, next_state, done)
+            repbuf.add_sample((_old_state, a, reward, obs, done))
+            # Check if done and reset if the game is ended
+            if done:
+                obs = env.reset()
+        print("Loaded replay buffer with", len(repbuf.buffer), "samples.")
+
+        # Now start training
+        done = True
         episode_reward = 0
-        a = 0
+        episode_steps = 0
+        rewards = deque([], maxlen=1000)
+        epsilon = EPSILON_MAX
+        episode_rewards_100 = 0
+        episode_rewards_1000 = 0
+        n_episode = 0
+        total_max_q = 0
+        mean_max_q = 0.0
 
-        # No-op between 0-30
-        _n = np.random.randint(0,30)
-        for i in range(_n):
-            obs, r, done, _ = env.step(0)
+        # Create summary
+        writer = tf.summary.FileWriter(FLAGS.log_dir)
+        tf_epsilon = tf.placeholder(tf.float32, ())
+        tf_reward = tf.placeholder(tf.float32, ())
+        tf_reward100 = tf.placeholder(tf.float32, ())
+        tf_reward1000 = tf.placeholder(tf.float32, ())
+        tf_episode_steps = tf.placeholder(tf.int32, ())
+        tf_mean_max_q = tf.placeholder(tf.float32, ())
+        epsilon_summary = tf.summary.scalar('epsilon', tf_epsilon)
+        reward_summary = tf.summary.scalar('reward', tf_reward)
+        reward100_summary = tf.summary.scalar('reward100', tf_reward100)
+        reward1000_summary = tf.summary.scalar('reward1000', tf_reward1000)
+        episode_steps_summary = tf.summary.scalar('episode_steps', tf_episode_steps)
+        mean_max_q_summary = tf.summary.scalar('mean_max_q', tf_mean_max_q)
 
-        while not done:
+        merged_summaries = tf.summary.merge([epsilon_summary, reward_summary, reward100_summary,
+                            reward1000_summary, episode_steps_summary, mean_max_q_summary])
+
+        for step in range(FLAGS.start_steps, TRAIN_STEPS):
             # Check if we need to save checkpoint
-            if total_steps > start_step and total_steps % STEPS_TO_CHECKPOINT == 0:
+            if step > 0 and step % STEPS_TO_CHECKPOINT == 0:
                 checkpoint_path = os.path.join(FLAGS.train_dir, FLAGS.alias + '.ckpt')
-                tf.logging.info('Saving to "%s-%d"', checkpoint_path, total_steps)
-                saver.save(sess, checkpoint_path, global_step=total_steps, write_meta_graph=False)
+                tf.logging.info('Saving to "%s-%d"', checkpoint_path, step)
+                saver.save(sess, checkpoint_path, global_step=step, write_meta_graph=True)
             # Check if we need to copy target network
-            if total_steps % COPY_STEP == 0:
+            if step % COPY_STEP == 0:
+                print("Copycat")
                 target_dqn.copy_from(dqn, sess)
-
-            # Adjust epsilon
-            if total_steps < EPSILON_FALL:
-                epsilon = EPSILON_MAX - (EPSILON_MAX - EPSILON_MIN) * total_steps / EPSILON_FALL
+            # Check if the environment has ended
+            if done:
+                # Get summary values
+                if episode_steps == 0:
+                    episode_steps = 1
+                rewards.append(episode_reward)
+                episode_rewards_100 = np.mean(list(rewards)[-100:])
+                episode_rewards_1000 = np.mean(list(rewards)[-1000:])
+                mean_max_q = total_max_q / episode_steps
+                # Write summary
+                summary = sess.run(merged_summaries, feed_dict={
+                    tf_epsilon: epsilon,
+                    tf_reward: episode_reward,
+                    tf_reward100: episode_rewards_100,
+                    tf_reward1000: episode_rewards_1000,
+                    tf_episode_steps: episode_steps,
+                    tf_mean_max_q: mean_max_q
+                })
+                writer.add_summary(summary, n_episode)
+                # Print to console
+                print("Step:", step,
+                  "Episode:", n_episode,
+                  "Num steps:", episode_steps,
+                  "Reward:", episode_reward,
+                  "Avg Reward (Last 100):", "%.3f" % episode_rewards_100,
+                  "Avg Reward (Last 1000):", "%.3f" % episode_rewards_1000,
+                  "Epsilon:", "%.3f" % epsilon,
+                  "Total-max-q", total_max_q,
+                  "Mean-max-q", "%.3f" % mean_max_q
+                )
+                # Update episode number
+                n_episode += 1
+                # Reset environment
+                state = env.reset()
+                episode_reward = 0
+                episode_steps = 0
+                total_max_q = 0
+                done = False
+            # Evaluate epsilon for epsilon-greedy policy
+            if step < EPSILON_FALL:
+                epsilon = EPSILON_MAX - (EPSILON_MAX - EPSILON_MIN) * step / EPSILON_FALL
             else:
                 epsilon = EPSILON_MIN
-            # Epsilon greedy
+            # Choose action epsilon-greedily using dqn
+            q_values = dqn.predict([state], sess)[0]
             if np.random.random() < epsilon:
                 # Choose random action
                 a = env.action_space.sample()
             else:
                 # Choose best action
-                est = sess.run(dqn.logits, feed_dict={dqn.input: [state]})[0]
-                a = np.argmax(est)
-            for _i in range(action_repeat):
-                # Perform action
-                obs, r, done, _ = env.step(a)
-                episode_reward += r
-
-            # Get the new state and add to replay buffer
-            _encoded_obs = encode_frame(obs)
-            next_state = np.append(state[1:], [_encoded_obs], axis=0)
-            RB.add_to_buffer((state, a, r, next_state, done))
-
-            # Extract batch of states and train network
-            batch = RB.get_batch(BATCH_SIZE)
-            batch_states = [s[0] for s in batch]
-            actions = [s[1] for s in batch]
-            pred_nextQ = sess.run(target_dqn.logits, feed_dict={target_dqn.input: [s[3] for s in batch]})
-            nextQ = [s[2] + GAMMA * max(y) if s[4]==False else s[2] for s,y in zip(batch, pred_nextQ)]
-            # Train network
-            _, cost, _step = sess.run([dqn.train_op, dqn.cost, dqn.increment_global_step], feed_dict={dqn.input: batch_states, dqn.targets:nextQ, dqn.actions: actions})
+                a = np.argmax(q_values)
+            # Perform choosen action
+            next_state, reward, done, _ = env.step(a)
+            episode_reward += reward
             episode_steps += 1
-            total_steps += 1
-        rewards.append(episode_reward)
-        # Episode is done, print summary
-        print("Episode:", e,
-          "Num steps:", episode_steps,
-          "Reward:", episode_reward,
-          "Avg Reward (Last 100):", "%.3f" % np.mean(rewards[-100:]),
-          "Epsilon:", "%.3f" % epsilon
-        )
+            # Insert into replay buffer
+            repbuf.add_sample((state, a, reward, next_state, done))
+            state = next_state
+            # Stats
+            total_max_q += q_values.max()
+            # Check if we need to train
+            if step % STEPS_TO_TRAIN == 0:
+                # Get a batch from replaybuffer
+                batch = repbuf.get_batch(BATCH_SIZE)
+                state_batch, action_batch, reward_batch, next_state_batch, done_batch = zip(*batch)
+                pred_nextQ = sess.run(target_dqn.logits, feed_dict={target_dqn.input: next_state_batch})
+                max_nextQ = np.max(pred_nextQ, axis=1)
+                pred_values = np.array(reward_batch) + np.invert(done_batch).astype('float32') * GAMMA * max_nextQ
+                cost = dqn.train(state_batch, action_batch, pred_values, sess)
 
-    # When ended, save checkpoint
-    checkpoint_path = os.path.join(FLAGS.train_dir, FLAGS.alias + '.ckpt')
-    tf.logging.info('Saving to "%s-%d"', checkpoint_path, TRAIN_STEPS)
-    saver.save(sess, checkpoint_path, global_step=TRAIN_STEPS)
 
-def test(env=None, n_frames_in_state=4, action_repeat=1, dqn=None):
-    EPSILON = 0.05
-    # Play one episode informative
-    obs = env.reset()
-    _encoded_obs = encode_frame(obs)
-    state = np.array([_encoded_obs] * n_frames_in_state)
-    current_game_step = 0
-    done = False
-    while not done:
-        if current_game_step % action_repeat == 0:
-            if np.random.random() < EPSILON:
-                a = env.action_space.sample()
-            else:
-                est = sess.run(dqn.logits, feed_dict={dqn.input: [state]})[0]
-                a = np.argmax(est)
-        obs, r, done, _ = env.step(a)
-        env.render()
-        current_game_step += 1
-    print("Ended.")
-
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--mode', type=str, default='train',
-      help="""\
-      Mode: train or test.
-    """)
-    parser.add_argument('--alias', type=str, default='tmp',
-      help="""\
-      Alias to create the checkpoint name
-    """)
-    parser.add_argument('--train_dir', type=str, default='tmp',
-      help="""\
-      Directory to save checkpoints
-    """)
-    parser.add_argument('--checkpoint', type=str, default='',
-      help="""\
-      Select a checkpoint to start from
-    """)
-    parser.add_argument('--episodes', type=int, default=100000,
-      help="""\
-      Number of training steps
-    """)
-    parser.add_argument('--action_repeat', type=int, default=4,
-      help="""\
-      Number of training steps
-    """)
-    FLAGS, unparsed = parser.parse_known_args()
-    tf.logging.set_verbosity(tf.logging.INFO)
-
-    # Parameters
-    TARGET_SIZE = 83 # Size in width and height of the image we want
-    ACTION_REPEAT = FLAGS.action_repeat # Repeat the same action for N frames
-    N_FRAMES_IN_STATE = 4
-    GENERATOR_SCOPE = 'generator'
-    TARGET_SCOPE = 'target'
-
-    env = gym.make("Breakout-v0")
-    # Set seed for replication
-    env.seed(42)
-
-    sess = tf.Session()
-    # Init networks
-    dqn = DQN(frame_size=TARGET_SIZE, frames_per_state=N_FRAMES_IN_STATE,
-                    action_space_size=env.action_space.n, scope=GENERATOR_SCOPE)
-    target_dqn = DQN(frame_size=TARGET_SIZE, frames_per_state=N_FRAMES_IN_STATE,
-                    action_space_size=env.action_space.n, scope=TARGET_SCOPE)
-    # Init tf variables
-    sess.run(tf.global_variables_initializer())
-    saver = tf.train.Saver(var_list=tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope=GENERATOR_SCOPE), max_to_keep=10)
-
-    start_step = 0
-    # Check if we need to load a checkpoint
-    if FLAGS.checkpoint:
-        _saver = tf.train.Saver(var_list=tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope=GENERATOR_SCOPE))
-        _saver.restore(sess, FLAGS.checkpoint)
-        start_step = dqn.global_step.eval(session=sess)
-
-    if FLAGS.mode == 'train':
-        train(env=env, n_frames_in_state=N_FRAMES_IN_STATE, action_repeat=ACTION_REPEAT,
-                dqn=dqn, target_dqn=target_dqn, saver=saver, FLAGS=FLAGS, start_step=start_step)
     elif FLAGS.mode == 'test':
-        test(env=env, n_frames_in_state=N_FRAMES_IN_STATE, action_repeat=ACTION_REPEAT, dqn=dqn)
+        # Testing mode
+        epsilon = 0.05
+        rewards = []
+        for _ in trange(100):
+            done = False
+            obs = env.reset()
+            reward = 0
+            while not done:
+                # Choose action
+                if np.random.random() < epsilon:
+                    # Choose random action
+                    a = env.action_space.sample()
+                else:
+                    # Choose best action
+                    a = np.argmax(dqn.predict([obs], sess)[0])
+                obs, r, done, _ = env.step(a)
+                reward += r
+            rewards.append(reward)
+        print("Mean 100 episode total reward:", np.mean(rewards))
+
+    elif FLAGS.mode == 'render':
+        env = gym.wrappers.Monitor(env, FLAGS.video_output)
+        # Render mode
+        epsilon = 0.05
+        rewards = []
+        for _ in trange(FLAGS.render_episodes):
+            done = False
+            obs = env.reset()
+            reward = 0
+            while not done:
+                # Choose action
+                if np.random.random() < epsilon:
+                    # Choose random action
+                    a = env.action_space.sample()
+                else:
+                    # Choose best action
+                    a = np.argmax(dqn.predict([obs], sess)[0])
+                obs, r, done, _ = env.step(a)
+                reward += r
+                env.render()
+                #sleep(0.05)
+            rewards.append(reward)
+        print("Mean", FLAGS.render_episodes, "episode total reward:", np.mean(rewards))
+        print("Saving to file", FLAGS.video_output)
