@@ -19,10 +19,11 @@ In these results we will present mean episode rewards for the different checkpoi
 
 I trained the network for 24h+ on a Tesla K80 GPU, resulting in ~8M steps (or ~50k episodes). These are the relative tensorboard screenshots and relative meaning (in the scale of number of episodes):
 
-!["tensorboard screenshot 1"][screen1]
-![tensorboard screenshot 2][screen2]
-![tensorboard screenshot 3][screen3]
-[screen1]: src/screen1.png?raw=true
+
+
+![tensorboard1](src/screen1.png?raw=true)
+![tensorboard2][screen2]
+![tensorboard3][screen3]
 [screen2]: src/screen2.png?raw=true
 [screen3]: src/screen3.png?raw=true
 
