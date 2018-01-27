@@ -19,19 +19,19 @@ In these results we will present mean episode rewards for the different checkpoi
 
 I trained the network for 24h+ on a Tesla K80 GPU, resulting in ~8M steps (or ~50k episodes). These are the relative tensorboard screenshots and relative meaning (in the scale of number of episodes):
 
-![tensorboard screenshot 1][screen1]
+!["tensorboard screenshot 1"][screen1]
 ![tensorboard screenshot 2][screen2]
 ![tensorboard screenshot 3][screen3]
 [screen1]: src/screen1.png?raw=true
 [screen2]: src/screen2.png?raw=true
 [screen3]: src/screen3.png?raw=true
 
-- Episode steps: number of steps for every episode
-- Epsilon: decay of the epsilon-greedy parameter (linear in the number of steps, not in the number of episodes)
-- Mean_max_q: episode-mean of the max of the compute Q-value by the DQN network
-- Reward: episode reward
-- Reward100: mean reward for the last 100 episodes
-- Reward1000: mean reward for the last 1000 episodes
+- **Episode steps**: number of steps for every episode
+- **Epsilon**: decay of the epsilon-greedy parameter (linear in the number of steps, not in the number of episodes)
+- **Mean_max_q**: episode-mean of the max of the compute Q-value by the DQN network
+- **Reward**: episode reward
+- **Reward100**: mean reward for the last 100 episodes
+- **Reward1000**: mean reward for the last 1000 episodes
 
 ### Testing
 I tested the checkpoints both in dqn and vanilla mode, here the mean of 100 episodes is reported.
