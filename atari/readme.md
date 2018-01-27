@@ -19,13 +19,9 @@ In these results we will present mean episode rewards for the different checkpoi
 
 I trained the network for 24h+ on a Tesla K80 GPU, resulting in ~8M steps (or ~50k episodes). These are the relative tensorboard screenshots and relative meaning (in the scale of number of episodes):
 
-
-
 ![tensorboard1](src/screen1.png?raw=true)
-![tensorboard2][screen2]
-![tensorboard3][screen3]
-[screen2]: src/screen2.png?raw=true
-[screen3]: src/screen3.png?raw=true
+![tensorboard2](src/screen2.png?raw=true)
+![tensorboard3](src/screen3.png?raw=true)
 
 - **Episode steps**: number of steps for every episode
 - **Epsilon**: decay of the epsilon-greedy parameter (linear in the number of steps, not in the number of episodes)
@@ -49,10 +45,10 @@ I tested the checkpoints both in dqn and vanilla mode, here the mean of 100 epis
 | 7.9M  | 6.88     | 57.61        | ![7_9M][7_9M]|
 
 [200k]: src/200k.gif?raw=true
-[520k]: src/520k.gif
-[770k]: src/770k.gif
-[960k]: src/960k.gif
-[1_8M]: src/1_8m.gif
-[4_8M]: src/4_8m.gif
-[6_2M]: src/6_2m.gif
-[7_9M]: src/7_9m.gif
+[520k]: src/520k.gif?raw=true
+[770k]: src/770k.gif?raw=true
+[960k]: src/960k.gif?raw=true
+[1_8M]: src/1_8m.gif?raw=true
+[4_8M]: src/4_8m.gif?raw=true
+[6_2M]: src/6_2m.gif?raw=true
+[7_9M]: src/7_9m.gif?raw=true
