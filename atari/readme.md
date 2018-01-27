@@ -48,7 +48,7 @@ I tested the checkpoints both in dqn and vanilla mode, here the mean of 100 epis
 [520k]: src/520k.gif?raw=true
 [770k]: src/770k.gif?raw=true
 [960k]: src/960k.gif?raw=true
-[18M]: src/18m.gif?raw=true
-[48M]: src/48m.gif?raw=true
-[62M]: src/62m.gif?raw=true
-[79M]: src/79m.gif?raw=true
+[18M]: src/18M.gif?raw=true
+[48M]: src/48M.gif?raw=true
+[62M]: src/62M.gif?raw=true
+[79M]: src/79M.gif?raw=true
