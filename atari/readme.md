@@ -39,16 +39,16 @@ I tested the checkpoints both in dqn and vanilla mode, here the mean of 100 epis
 | 520k  | 2.63     | 12.99        | ![520k][520k]|
 | 770k  | 2.8      | 18.4         | ![770k][770k]|
 | 960k  | 2.88     | 15.85        | ![960k][960k]|
-| 1.8M  | 4.28     | 28.03        | ![1_8M][1_8M]|
-| 4.8M  | 5.84     | 46.01        | ![4_8M][4_8M]|
-| 6.2M  | 7.13     | 65.08        | ![6_2M][6_2M]|
-| 7.9M  | 6.88     | 57.61        | ![7_9M][7_9M]|
+| 1.8M  | 4.28     | 28.03        | ![1_8M][18M]|
+| 4.8M  | 5.84     | 46.01        | ![4_8M][48M]|
+| 6.2M  | 7.13     | 65.08        | ![6_2M][62M]|
+| 7.9M  | 6.88     | 57.61        | ![7_9M][79M]|
 
 [200k]: src/200k.gif?raw=true
 [520k]: src/520k.gif?raw=true
 [770k]: src/770k.gif?raw=true
 [960k]: src/960k.gif?raw=true
-[1_8M]: src/1_8m.gif?raw=true
-[4_8M]: src/4_8m.gif?raw=true
-[6_2M]: src/6_2m.gif?raw=true
-[7_9M]: src/7_9m.gif?raw=true
+[18M]: src/18m.gif?raw=true
+[48M]: src/48m.gif?raw=true
+[62M]: src/62m.gif?raw=true
+[79M]: src/79m.gif?raw=true
